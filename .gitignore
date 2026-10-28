@@ -1,0 +1,9 @@
+/bin/
+/dist/
+/state/
+*.test
+*.pem
+*_key
+*_key.pub
+config.local.json
+.DS_Store
