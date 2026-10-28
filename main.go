@@ -63,6 +63,7 @@ func run() error {
 	path := fs.String("config", filepath.Join(defaultDir, "config.json"), "trusted local configuration")
 	name := fs.String("target", "", "configured target name (also the SSH username)")
 	stdio := fs.Bool("stdio", false, "serve one SSH connection over stdin/stdout; no listening socket")
+	noClientAuth := fs.Bool("no-client-auth", false, "skip client key authentication (requires --stdio; still checks target username)")
 	check := fs.Bool("check", false, "validate configuration without starting a session")
 	if err := fs.Parse(os.Args[1:]); err != nil {
 		return err
@@ -70,11 +71,14 @@ func run() error {
 	if fs.NArg() != 0 {
 		return errors.New("unexpected positional arguments")
 	}
+	if *noClientAuth && !*stdio {
+		return errors.New("--no-client-auth requires --stdio")
+	}
 	cfg, err := readConfig(*path)
 	if err != nil {
 		return err
 	}
-	scfg, err := serverConfig(cfg, *name)
+	scfg, err := serverConfig(cfg, *name, *noClientAuth)
 	if err != nil {
 		return err
 	}
@@ -110,9 +114,12 @@ func readConfig(path string) (*config, error) {
 	if err != nil {
 		return nil, err
 	}
+	if cfg.HostKey == "" {
+		return nil, errors.New("host_key is required")
+	}
 	for _, p := range []*string{&cfg.HostKey, &cfg.AuthorizedKeys} {
 		if *p == "" {
-			return nil, errors.New("host_key and authorized_keys are required")
+			continue
 		}
 		if !filepath.IsAbs(*p) {
 			*p = filepath.Join(base, *p)
@@ -152,7 +159,7 @@ func validName(name string) bool {
 	return true
 }
 
-func serverConfig(cfg *config, name string) (*ssh.ServerConfig, error) {
+func serverConfig(cfg *config, name string, noClientAuth bool) (*ssh.ServerConfig, error) {
 	if _, ok := cfg.Targets[name]; !ok {
 		return nil, errors.New("--target must name a configured target")
 	}
@@ -163,6 +170,21 @@ func serverConfig(cfg *config, name string) (*ssh.ServerConfig, error) {
 	signer, err := ssh.ParsePrivateKey(data)
 	if err != nil {
 		return nil, fmt.Errorf("parse host key: %w", err)
+	}
+	sc := &ssh.ServerConfig{ServerVersion: "SSH-2.0-ssh-command-adapter", MaxAuthTries: 3}
+	sc.AddHostKey(signer)
+	if noClientAuth {
+		sc.NoClientAuth = true
+		sc.NoClientAuthCallback = func(conn ssh.ConnMetadata) (*ssh.Permissions, error) {
+			if conn.User() != name {
+				return nil, errors.New("target rejected")
+			}
+			return &ssh.Permissions{}, nil
+		}
+		return sc, nil
+	}
+	if cfg.AuthorizedKeys == "" {
+		return nil, errors.New("authorized_keys is required for client key authentication")
 	}
 	data, err = os.ReadFile(cfg.AuthorizedKeys)
 	if err != nil {
@@ -183,7 +205,6 @@ func serverConfig(cfg *config, name string) (*ssh.ServerConfig, error) {
 	if len(allowed) == 0 {
 		return nil, errors.New("no authorized keys")
 	}
-	sc := &ssh.ServerConfig{ServerVersion: "SSH-2.0-ssh-command-adapter", MaxAuthTries: 3}
 	sc.PublicKeyCallback = func(conn ssh.ConnMetadata, key ssh.PublicKey) (*ssh.Permissions, error) {
 		if conn.User() == name {
 			for _, candidate := range allowed {
@@ -194,7 +215,6 @@ func serverConfig(cfg *config, name string) (*ssh.ServerConfig, error) {
 		}
 		return nil, errors.New("key or target rejected")
 	}
-	sc.AddHostKey(signer)
 	return sc, nil
 }
 

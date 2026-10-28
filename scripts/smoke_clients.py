@@ -40,7 +40,7 @@ while True:
 '''
 
 
-def check_client(name, args, state, auto_login=False):
+def check_client(name, args, state, auto_login=False, no_client_auth=False):
     master, slave = pty.openpty()
     fcntl.ioctl(slave, termios.TIOCSWINSZ, struct.pack("HHHH", 24, 80, 0, 0))
     proc = subprocess.Popen(
@@ -77,7 +77,8 @@ def check_client(name, args, state, auto_login=False):
         if code not in allowed:
             raise RuntimeError(f"{name}: unexpected exit code {code}")
         label = name + (" automated gateway login" if auto_login else "")
-        print(f"{label}: pinned host key, key auth and repeated resize PASS; client exit={code}")
+        auth = "no client key" if no_client_auth else "key auth"
+        print(f"{label}: pinned host key, {auth} and repeated resize PASS; client exit={code}")
     finally:
         if proc.poll() is None:
             proc.kill()
@@ -107,6 +108,15 @@ def main():
                 check_client(name, [command] + extra, state)
             else:
                 print(f"{name}: skipped (not installed)")
+        ssh_config = state / "ssh_config"
+        text = ssh_config.read_text().replace("--stdio", "--stdio --no-client-auth")
+        text = "\n".join(line for line in text.splitlines() if not line.strip().startswith(
+            ("IdentityFile ", "IdentitiesOnly ", "IdentityAgent ", "PreferredAuthentications ")
+        )) + "\n"
+        ssh_config.write_text(text, encoding="utf-8")
+        for name, command, extra in clients:
+            if command:
+                check_client(name, [command] + extra, state, no_client_auth=True)
         tssh = shutil.which("tssh")
         if tssh:
             config["targets"]["shell"]["command"].append("gateway")
@@ -118,7 +128,7 @@ def main():
                 "    #!! ExpectPattern1 *gateway$*\n"
                 r"    #!! ExpectSendText1 ssh user@server.example.com\r"
             ), encoding="utf-8")
-            check_client("tssh", [tssh], state, auto_login=True)
+            check_client("tssh", [tssh], state, auto_login=True, no_client_auth=True)
 
 
 if __name__ == "__main__":

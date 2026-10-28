@@ -82,6 +82,22 @@ Expect 或文件传输配置继续生效。现在执行 `tssh` 即可在原有�
 后续缩放仍由适配器处理，文件传输仍交给跳板机 CLI。该自动交互仅适用于 tssh；
 普通 OpenSSH 会忽略 `#!!` 配置，需手动执行第二跳或使用本地包装命令。
 
+## 可选：省略本机客户端密钥认证
+
+`--stdio` 通过客户端与它启动的适配器之间的私有管道通信，没有监听网络端口。
+因此可在 `ProxyCommand` 中加入 `--no-client-auth`，并删除 `IdentityFile`、
+`IdentitiesOnly`、`IdentityAgent`、`PreferredAuthentications` 四项。
+该参数必须与 `--stdio` 一起使用，SSH 用户名仍须匹配目标名称；此时 JSON 中的
+`authorized_keys` 可以省略。默认模式仍使用客户端密钥认证。
+
+保留 `HostKeyAlias`、`UserKnownHostsFile` 和 `StrictHostKeyChecking yes`，
+用于校验适配器的主机身份。SSH 协议仍需要服务端主机密钥；省略本机客户端认证
+不会取消堡垒机或开发机自己的认证。
+
+整个 `Host` 条目也可以直接写进 `~/.ssh/config`，不必使用额外的 Include 文件。
+放在通配 Host 条目之前，并移除重复 Include 或同名条目。命令的 JSON 配置
+仍放在原私有目录中。
+
 ## rz / sz
 
 适配器透明传输终端字节，本身不实现文件传输。

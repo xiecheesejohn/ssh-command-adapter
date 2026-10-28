@@ -83,6 +83,10 @@ func localPair(t *testing.T) (net.Conn, net.Conn) {
 }
 
 func fixture(t *testing.T, mode string) (*ssh.Client, <-chan error) {
+	return fixtureAuth(t, mode, false)
+}
+
+func fixtureAuth(t *testing.T, mode string, noClientAuth bool) (*ssh.Client, <-chan error) {
 	t.Helper()
 	t.Setenv("ADAPTER_TEST_HELPER", "1")
 	dir := filepath.Join(t.TempDir(), "private")
@@ -94,7 +98,10 @@ func fixture(t *testing.T, mode string) (*ssh.Client, <-chan error) {
 		t.Fatal(err)
 	}
 	cfg.Targets["shell"] = target{Command: []string{os.Args[0], "-test.run=^TestPTYHelper$", "--", mode}}
-	scfg, err := serverConfig(cfg, "shell")
+	if noClientAuth {
+		cfg.AuthorizedKeys = ""
+	}
+	scfg, err := serverConfig(cfg, "shell", noClientAuth)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -107,8 +114,12 @@ func fixture(t *testing.T, mode string) (*ssh.Client, <-chan error) {
 	result := make(chan error, 1)
 	ctx, cancel := context.WithTimeout(context.Background(), 15*time.Second)
 	go func() { result <- serve(ctx, server, scfg, cfg.Targets["shell"]) }()
+	var auth []ssh.AuthMethod
+	if !noClientAuth {
+		auth = []ssh.AuthMethod{ssh.PublicKeys(signer)}
+	}
 	conn, channels, requests, err := ssh.NewClientConn(client, "test", &ssh.ClientConfig{
-		User: "shell", Auth: []ssh.AuthMethod{ssh.PublicKeys(signer)},
+		User: "shell", Auth: auth,
 		HostKeyCallback: ssh.FixedHostKey(scfgHostKey(t, cfg.HostKey)),
 	})
 	if err != nil {
@@ -278,7 +289,7 @@ func TestKeyAndTargetAuthentication(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	scfg, err := serverConfig(cfg, "shell")
+	scfg, err := serverConfig(cfg, "shell", false)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -315,5 +326,44 @@ func TestInitializationDoesNotOverwriteKeys(t *testing.T) {
 	after, _ := os.ReadFile(filepath.Join(dir, "host_key"))
 	if !bytes.Equal(before, after) {
 		t.Fatal("host key changed")
+	}
+}
+
+func TestNoClientAuthPreservesTerminalSession(t *testing.T) {
+	c, _ := fixtureAuth(t, "exit", true)
+	s, _, out := shellSession(t, c)
+	data, err := io.ReadAll(out)
+	if err != nil || string(data) != "final-output\n" {
+		t.Fatalf("output=%q err=%v", data, err)
+	}
+	var exit *ssh.ExitError
+	if err := s.Wait(); !errors.As(err, &exit) || exit.ExitStatus() != 37 {
+		t.Fatalf("exit: %v", err)
+	}
+}
+
+func TestNoClientAuthRejectsWrongTarget(t *testing.T) {
+	dir := filepath.Join(t.TempDir(), "private")
+	if err := initialize(dir); err != nil {
+		t.Fatal(err)
+	}
+	cfg, err := readConfig(filepath.Join(dir, "config.json"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	cfg.AuthorizedKeys = ""
+	scfg, err := serverConfig(cfg, "shell", true)
+	if err != nil {
+		t.Fatal(err)
+	}
+	server, client := localPair(t)
+	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+	defer cancel()
+	go func() { _ = serve(ctx, server, scfg, cfg.Targets["shell"]) }()
+	defer client.Close()
+	conn, _, _, err := ssh.NewClientConn(client, "test", &ssh.ClientConfig{User: "other-target", HostKeyCallback: ssh.FixedHostKey(scfgHostKey(t, cfg.HostKey))})
+	if err == nil {
+		conn.Close()
+		t.Fatal("unexpected authentication success for wrong target")
 	}
 }

@@ -119,6 +119,26 @@ CLI. Do not combine this with the CLI's own automatic second login or it may
 send the command twice. This automation is a tssh feature; ordinary OpenSSH
 ignores the `#!!` directives and requires manual second login or a local wrapper.
 
+### Optional: omit local client key authentication
+
+Since `--stdio` uses private pipes between the SSH client and its own adapter
+child, client key authentication is optional. Add `--no-client-auth` to this
+entry's `ProxyCommand` and remove `IdentityFile`, `IdentitiesOnly`,
+`IdentityAgent`, and `PreferredAuthentications`. The flag requires `--stdio`;
+there is no unauthenticated network listener. The requested SSH username must
+still match the configured target. `authorized_keys` may be omitted from the
+JSON configuration in this mode. Key authentication remains the default.
+
+Keep `HostKeyAlias`, `UserKnownHostsFile`, and `StrictHostKeyChecking yes` to
+verify the adapter's stable host identity. The SSH protocol still needs a host
+key; skipping client key authentication does not remove host verification or
+the gateway/destination's own authentication.
+
+The `Host` entry may be pasted directly into `~/.ssh/config` instead of using
+an `Include`. Put it before broad wildcard blocks and remove the redundant
+include or duplicate alias. The JSON command configuration stays in its private
+directory.
+
 ## File transfers
 
 The adapter provides binary-safe terminal transport, **not a file-transfer
