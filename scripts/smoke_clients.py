@@ -19,6 +19,15 @@ import time
 
 
 HELPER = '''import os,sys,signal,fcntl,termios,struct
+if sys.argv[1:] == ["gateway"]:
+    sys.stdout.write("gateway$ ")
+    sys.stdout.flush()
+    command=b""
+    while b"\\r" not in command:
+        command+=os.read(0,1024)
+    if command != b"ssh user@server.example.com\\r":
+        sys.exit(92)
+    print("AUTOLOGIN_OK",flush=True)
 def report(*args):
     rows,cols,_,_=struct.unpack("HHHH",fcntl.ioctl(0,termios.TIOCGWINSZ,b"\\0"*8))
     print(f"SIZE={rows}x{cols}",flush=True)
@@ -31,7 +40,7 @@ while True:
 '''
 
 
-def check_client(name, args, state):
+def check_client(name, args, state, auto_login=False):
     master, slave = pty.openpty()
     fcntl.ioctl(slave, termios.TIOCSWINSZ, struct.pack("HHHH", 24, 80, 0, 0))
     proc = subprocess.Popen(
@@ -53,6 +62,8 @@ def check_client(name, args, state):
             raise RuntimeError(f"{name}: missing {needle!r}; output={output[-2000:]!r}")
 
     try:
+        if auto_login:
+            expect(b"AUTOLOGIN_OK")
         expect(b"SIZE=24x80")
         for rows, cols in [(40, 120), (17, 63)]:
             fcntl.ioctl(master, termios.TIOCSWINSZ, struct.pack("HHHH", rows, cols, 0, 0))
@@ -65,7 +76,8 @@ def check_client(name, args, state):
         allowed = (0, 23) if name == "tssh" else (23,)
         if code not in allowed:
             raise RuntimeError(f"{name}: unexpected exit code {code}")
-        print(f"{name}: pinned host key, key auth and repeated resize PASS; client exit={code}")
+        label = name + (" automated gateway login" if auto_login else "")
+        print(f"{label}: pinned host key, key auth and repeated resize PASS; client exit={code}")
     finally:
         if proc.poll() is None:
             proc.kill()
@@ -95,6 +107,18 @@ def main():
                 check_client(name, [command] + extra, state)
             else:
                 print(f"{name}: skipped (not installed)")
+        tssh = shutil.which("tssh")
+        if tssh:
+            config["targets"]["shell"]["command"].append("gateway")
+            config_path.write_text(json.dumps(config), encoding="utf-8")
+            ssh_config = state / "ssh_config"
+            ssh_config.write_text(ssh_config.read_text().replace(
+                "#!! ExpectCount 0", "#!! ExpectCount 1\n"
+                "    #!! ExpectTimeout 10\n"
+                "    #!! ExpectPattern1 *gateway$*\n"
+                r"    #!! ExpectSendText1 ssh user@server.example.com\r"
+            ), encoding="utf-8")
+            check_client("tssh", [tssh], state, auto_login=True)
 
 
 if __name__ == "__main__":

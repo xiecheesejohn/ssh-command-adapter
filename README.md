@@ -98,6 +98,27 @@ The generated entry disables connection multiplexing to isolate each child
 process. The original remote `ProxyCommand` and login-time `stty` workaround
 are not used for this alias.
 
+### Gateways that require a second login command
+
+If a gateway CLI opens its own shell but does not reliably enter the destination,
+configure the target command to open only the gateway. Let tssh send the second
+login command after the gateway prompt appears. Override `ExpectCount 0` in the
+private generated SSH entry, for example:
+
+```sshconfig
+    #!! ExpectCount 1
+    #!! ExpectTimeout 300
+    #!! ExpectPattern1 *gateway$*
+    #!! ExpectSendText1 ssh user@server.example.com\r
+```
+
+Use the gateway's actual, distinctive ready prompt. This is a one-time login
+interaction, not a resize workaround: subsequent resizes continue through the
+adapter's `window-change` handling. File transfer remains owned by the gateway
+CLI. Do not combine this with the CLI's own automatic second login or it may
+send the command twice. This automation is a tssh feature; ordinary OpenSSH
+ignores the `#!!` directives and requires manual second login or a local wrapper.
+
 ## File transfers
 
 The adapter provides binary-safe terminal transport, **not a file-transfer

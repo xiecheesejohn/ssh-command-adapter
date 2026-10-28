@@ -66,6 +66,22 @@ Include "/私有目录/ssh_config"
 移除或重命名原来的同名条目，避免“先出现的配置值优先”造成旧的代理、
 Expect 或文件传输配置继续生效。现在执行 `tssh` 即可在原有列表里选择这个主机。
 
+如果跳板机 CLI 只进入跳板机 shell，没有可靠地自动进入最终机器，可以让本地
+命令只负责登录跳板机，再由 tssh 等到明确的提示符后发送第二跳命令。
+在私有 SSH 条目中把 `ExpectCount 0` 替换为：
+
+```sshconfig
+    #!! ExpectCount 1
+    #!! ExpectTimeout 300
+    #!! ExpectPattern1 *gateway$*
+    #!! ExpectSendText1 ssh user@server.example.com\r
+```
+
+把提示符换成跳板机实际的就绪提示符，账号和地址只写在私有配置里。
+不要同时启用 CLI 自己的自动二跳，否则可能重复执行。这是登录时的一次交互，
+后续缩放仍由适配器处理，文件传输仍交给跳板机 CLI。该自动交互仅适用于 tssh；
+普通 OpenSSH 会忽略 `#!!` 配置，需手动执行第二跳或使用本地包装命令。
+
 ## rz / sz
 
 适配器透明传输终端字节，本身不实现文件传输。
