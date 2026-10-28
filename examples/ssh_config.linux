@@ -1,10 +1,10 @@
 # Paste before broad Host * blocks in ~/.ssh/config.
 # Assumes: program on PATH, init --no-client-auth, default XDG_CONFIG_HOME.
-# Match User to a target in your private config.json.
+# Match --target to an entry in your private config.json.
 Host command-work
     HostName localhost
     User work
-    ProxyCommand ssh-command-adapter --stdio --no-client-auth --target %r
+    ProxyCommand ssh-command-adapter --stdio --no-client-auth --target work
     HostKeyAlias ssh-command-adapter
     UserKnownHostsFile ~/.config/ssh-command-adapter/known_hosts
     StrictHostKeyChecking yes

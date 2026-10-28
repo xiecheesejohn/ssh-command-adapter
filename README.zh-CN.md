@@ -58,12 +58,13 @@ export PATH="$HOME/.local/bin:$PATH"
 密钥路径相对于该配置文件。
 
 在生成的 `ssh_config` 中，把 `Host command-shell` 改为 `Host work`，
-把 `User shell` 改为 `User work`，`%r` 会自动传入这个目标名称。
-这里 `User` 是本地目标名称，真正的远端用户名写在命令数组里。
+把 `--target shell` 改为 `--target work`。免客户端认证时，`--target` 是固定的
+本地命令配置名，独立于 SSH 的 `User`；`User` 可以表示远端登录账号。
+固定目标的真实用户名写在命令数组里；客户端密钥模式另要求 User 与目标名称一致。
 保留生成的主机校验和其他设置。程序在 PATH 中时，默认位置的配置会生成短命令：
 
 ```sshconfig
-    ProxyCommand ssh-command-adapter --stdio --no-client-auth --target %r
+    ProxyCommand ssh-command-adapter --stdio --no-client-auth --target work
 ```
 
 无需填写项目的长路径，也无需指定默认的 config.json 路径。若初始化时 PATH
@@ -107,9 +108,11 @@ Expect 或文件传输配置继续生效。现在执行 `tssh` 即可在原有�
 
 同一个跳板机也可供 `Host *.example.com` 通配条目使用：不要设置
 `HostName localhost`，让 `%h` 保留实际目标域名；自动二跳命令写成
-`ExpectSendText1 ssh %r@%h\r`。把 `User` 设成远端用户名，并在私有 JSON 里
-创建同名目标，命令仅打开跳板机。这样 `--target %r` 会复用该命令，而不必为每个
-域名单独配置。通配条目放在 `Host *` 前面；短别名需单独匹配，不能依赖其 HostName
+`ExpectSendText1 ssh %r@%h\r`。把 `User` 设成默认远端用户名，本地命令配置
+固定为 `--target gateway`，该配置只负责打开跳板机。免客户端认证时，所有域名和
+远端账号都复用它；`tssh root@server.example.com` 不需要再创建 root 配置。
+不要将目标写成 `--target %r`，因为 `%r` 是远端账号，不是本地配置名。
+通配条目放在 `Host *` 前面；短别名需单独匹配，不能依赖其 HostName
 再次命中通配规则。
 
 部分 tssh 版本不使用 HostKeyAlias 校验，因此需在适配器专用 known_hosts
@@ -123,7 +126,8 @@ Expect 或文件传输配置继续生效。现在执行 `tssh` 即可在原有�
 `--stdio` 通过客户端与它启动的适配器之间的私有管道通信，没有监听网络端口。
 因此可在 `ProxyCommand` 中加入 `--no-client-auth`，并删除 `IdentityFile`、
 `IdentitiesOnly`、`IdentityAgent`、`PreferredAuthentications` 四项。
-该参数必须与 `--stdio` 一起使用，SSH 用户名仍须匹配目标名称；此时 JSON 中的
+该参数必须与 `--stdio` 一起使用，本地 --target 与远端 SSH 用户名独立，也不改变
+本机进程的系统用户权限；只会执行本地指定的固定命令。此时 JSON 中的
 `authorized_keys` 可以省略。默认模式仍使用客户端密钥认证。
 
 保留 `HostKeyAlias`、`UserKnownHostsFile` 和 `StrictHostKeyChecking yes`，

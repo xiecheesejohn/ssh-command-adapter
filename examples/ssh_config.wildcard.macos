@@ -4,7 +4,7 @@
 # UserKnownHostsFile path. This is interactive tssh login, not a TCP SSH proxy.
 Host *.example.com
     User gateway
-    ProxyCommand ssh-command-adapter --stdio --no-client-auth --target %r
+    ProxyCommand ssh-command-adapter --stdio --no-client-auth --target gateway
     HostKeyAlias ssh-command-adapter
     UserKnownHostsFile "~/Library/Application Support/ssh-command-adapter/known_hosts"
     StrictHostKeyChecking yes

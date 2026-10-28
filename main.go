@@ -62,9 +62,9 @@ func run() error {
 	}
 	fs := flag.NewFlagSet("ssh-command-adapter", flag.ContinueOnError)
 	path := fs.String("config", filepath.Join(defaultDir, "config.json"), "trusted local configuration")
-	name := fs.String("target", "", "configured target name (also the SSH username)")
+	name := fs.String("target", "", "configured local command profile")
 	stdio := fs.Bool("stdio", false, "serve one SSH connection over stdin/stdout; no listening socket")
-	noClientAuth := fs.Bool("no-client-auth", false, "skip client key authentication (requires --stdio; still checks target username)")
+	noClientAuth := fs.Bool("no-client-auth", false, "skip client key authentication (requires private --stdio transport)")
 	check := fs.Bool("check", false, "validate configuration without starting a session")
 	if err := fs.Parse(os.Args[1:]); err != nil {
 		return err
@@ -162,7 +162,7 @@ func validName(name string) bool {
 
 func serverConfig(cfg *config, name string, noClientAuth bool) (*ssh.ServerConfig, error) {
 	if _, ok := cfg.Targets[name]; !ok {
-		return nil, errors.New("--target must name a configured target")
+		return nil, fmt.Errorf("local command profile %q is not configured; --target selects a config.json entry, not a destination username", name)
 	}
 	data, err := os.ReadFile(cfg.HostKey)
 	if err != nil {
@@ -175,13 +175,9 @@ func serverConfig(cfg *config, name string, noClientAuth bool) (*ssh.ServerConfi
 	sc := &ssh.ServerConfig{ServerVersion: "SSH-2.0-ssh-command-adapter", MaxAuthTries: 3}
 	sc.AddHostKey(signer)
 	if noClientAuth {
+		// The local ProxyCommand already selects the trusted command profile.
+		// The SSH username may carry a different destination user (e.g. root).
 		sc.NoClientAuth = true
-		sc.NoClientAuthCallback = func(conn ssh.ConnMetadata) (*ssh.Permissions, error) {
-			if conn.User() != name {
-				return nil, errors.New("target rejected")
-			}
-			return &ssh.Permissions{}, nil
-		}
 		return sc, nil
 	}
 	if cfg.AuthorizedKeys == "" {
@@ -297,7 +293,11 @@ func initializeMode(dir string, noClientAuth bool) error {
 	if abs != filepath.Join(base, "ssh-command-adapter") {
 		proxy += " --config " + shellQuote(filepath.Join(abs, "config.json"))
 	}
-	proxy += " --target %r"
+	if noClientAuth {
+		proxy += " --target shell"
+	} else {
+		proxy += " --target %r"
+	}
 	identity := ""
 	if !noClientAuth {
 		identity = fmt.Sprintf("    IdentityFile %s\n    IdentitiesOnly yes\n    IdentityAgent none\n    PreferredAuthentications publickey\n", sshQuote(filepath.Join(abs, "client_key")))

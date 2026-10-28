@@ -342,7 +342,7 @@ func TestNoClientAuthPreservesTerminalSession(t *testing.T) {
 	}
 }
 
-func TestNoClientAuthRejectsWrongTarget(t *testing.T) {
+func TestNoClientAuthSeparatesProfileFromDestinationUser(t *testing.T) {
 	dir := filepath.Join(t.TempDir(), "private")
 	if err := initialize(dir); err != nil {
 		t.Fatal(err)
@@ -361,10 +361,13 @@ func TestNoClientAuthRejectsWrongTarget(t *testing.T) {
 	defer cancel()
 	go func() { _ = serve(ctx, server, scfg, cfg.Targets["shell"]) }()
 	defer client.Close()
-	conn, _, _, err := ssh.NewClientConn(client, "test", &ssh.ClientConfig{User: "other-target", HostKeyCallback: ssh.FixedHostKey(scfgHostKey(t, cfg.HostKey))})
-	if err == nil {
-		conn.Close()
-		t.Fatal("unexpected authentication success for wrong target")
+	conn, _, _, err := ssh.NewClientConn(client, "test", &ssh.ClientConfig{User: "root", HostKeyCallback: ssh.FixedHostKey(scfgHostKey(t, cfg.HostKey))})
+	if err != nil {
+		t.Fatalf("destination username must not select the local profile: %v", err)
+	}
+	conn.Close()
+	if _, err := serverConfig(cfg, "root", true); err == nil {
+		t.Fatal("unknown local command profile was accepted")
 	}
 }
 
@@ -389,7 +392,7 @@ func TestInitializeWithoutClientKeys(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if strings.Contains(string(data), "IdentityFile") || !strings.Contains(string(data), "--no-client-auth") || !strings.Contains(string(data), "--target %r") {
+	if strings.Contains(string(data), "IdentityFile") || !strings.Contains(string(data), "--no-client-auth") || !strings.Contains(string(data), "--target shell") {
 		t.Fatalf("unexpected generated config: %s", data)
 	}
 }

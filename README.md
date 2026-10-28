@@ -62,11 +62,11 @@ overwritten. Initialize only once; upgrades keep using your existing state.
 Use `init --dir /absolute/private/path` for another location; its parent must exist.
 
 When PATH resolves to the installed binary, the generated entry uses its short
-name and `%r` for the SSH username. At the default configuration location it
+name and a fixed local profile. At the default configuration location it
 also omits the unnecessary `--config` argument:
 
 ```sshconfig
-    ProxyCommand ssh-command-adapter --stdio --no-client-auth --target %r
+    ProxyCommand ssh-command-adapter --stdio --no-client-auth --target shell
 ```
 
 If PATH does not resolve to the binary being initialized, the generator retains
@@ -102,9 +102,11 @@ ssh-command-adapter --stdio --no-client-auth --target remote --check
 ```
 
 In the generated `ssh_config`, rename `Host command-shell` to your desired alias,
-change `User shell` to `User remote`. `%r` automatically selects that configured
-target. The SSH username selects the configured local target; the
-destination's real username belongs in the command array. Keep the generated
+change `--target shell` to `--target remote`. With `--no-client-auth`, the local
+command profile and the SSH username are independent: the profile selects the
+trusted command, while the username can carry the destination login user. For a
+fixed command, put the destination's actual username in its argument array.
+Client-key mode additionally requires `User` to match the profile. Keep the generated
 host-verification settings (and client identity settings, if enabled). Then:
 
 ```sh
@@ -151,8 +153,11 @@ ignores the `#!!` directives and requires manual second login or a local wrapper
 The same gateway can serve a wildcard entry such as `Host *.example.com`: omit
 `HostName localhost` so `%h` remains the destination hostname, and use
 `ExpectSendText1 ssh %r@%h\r`. Set `User` to the intended destination username
-and define a same-named local target that opens the gateway. With `--target %r`,
-all matching hosts reuse that one command. Place this entry before `Host *`.
+and use a fixed local target that opens the gateway, e.g. `--target gateway`.
+With `--no-client-auth`, all matching hosts and destination usernames reuse that
+one command; `tssh root@server.example.com` needs no extra `root` profile.
+Do not use `--target %r` for this mode: `%r` is the destination user, not the
+local profile. Place this entry before `Host *`.
 Alias names are matched before `HostName` expansion; a short alias needs its
 own matching entry.
 
@@ -171,8 +176,9 @@ Since `--stdio` uses private pipes between the SSH client and its own adapter
 child, client key authentication is optional. Add `--no-client-auth` to this
 entry's `ProxyCommand` and remove `IdentityFile`, `IdentitiesOnly`,
 `IdentityAgent`, and `PreferredAuthentications`. The flag requires `--stdio`;
-there is no unauthenticated network listener. The requested SSH username must
-still match the configured target. `authorized_keys` may be omitted from the
+there is no unauthenticated network listener. The SSH username is independent
+of the locally selected `--target`; it does not grant local OS privileges.
+Only a configured local command can run. `authorized_keys` may be omitted from the
 JSON configuration in this mode. Key authentication remains the default when
 the flag is absent. `init --no-client-auth` generates this simplified setup directly.
 
@@ -218,8 +224,10 @@ not every third-party file-transfer implementation.
   Code Remote SSH cannot use this adapter as a general SSH server.
 - It is an SSH endpoint, not a TCP tunnel to the destination's SSH daemon.
   Authentication to the destination remains the configured command's job.
-- Only a configured command can run. The authenticated SSH username must match
-  `--target`; remote command strings are rejected.
+- Only a configured command can run; remote command strings are rejected.
+  Client-key mode requires the authenticated username to match `--target`.
+  In private no-client-auth mode, the local ProxyCommand selects the profile
+  independently of the destination username.
 - Uses a dedicated client key and a pinned host key even though transport is
   over local pipes. It never listens on a network interface.
 - Configuration and command executables are trusted local code, running as the

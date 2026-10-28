@@ -19,13 +19,14 @@ import time
 
 
 HELPER = '''import os,sys,signal,fcntl,termios,struct
-if sys.argv[1:] == ["gateway"]:
+if sys.argv[1:2] == ["gateway"]:
     sys.stdout.write("gateway$ ")
     sys.stdout.flush()
     command=b""
     while b"\\r" not in command:
         command+=os.read(0,1024)
-    if command != b"ssh user@server.example.com\\r":
+    expected=(sys.argv[2] if len(sys.argv)>2 else "user").encode()
+    if command != b"ssh "+expected+b"@server.example.com\\r":
         sys.exit(92)
     print("AUTOLOGIN_OK",flush=True)
 def report(*args):
@@ -148,11 +149,18 @@ def main():
             # the dedicated known_hosts file pins the local adapter's key.
             text = ssh_config.read_text().replace("Host command-shell", "Host *.example.com")
             text = text.replace("    HostName localhost\n", "")
-            text = text.replace("ssh user@server.example.com", "ssh user@%h")
+            text = text.replace("ssh user@server.example.com", "ssh %r@%h")
+            text = text.replace("--target %r", "--target shell")
+            text = text.replace("User shell", "User user")
             ssh_config.write_text(text, encoding="utf-8")
             known = state / "known_hosts"
             known.write_text(known.read_text().replace("ssh-command-adapter,localhost ", "ssh-command-adapter,localhost,*.example.com "), encoding="utf-8")
             check_client("tssh", [tssh], state, auto_login=True, no_client_auth=True, destination="server.example.com")
+            # Override the SSH username without adding another local profile.
+            config["targets"]["shell"]["command"].append("root")
+            config_path.write_text(json.dumps(config), encoding="utf-8")
+            check_client("tssh", [tssh], state, auto_login=True, no_client_auth=True, destination="root@server.example.com")
+            print("Explicit destination username root with shared local profile PASS")
             print("Wildcard hostname expansion and pinned local host key PASS")
 
 
