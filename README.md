@@ -20,21 +20,33 @@ command's exit status. It does not open a listening port or require a daemon.
 Each connection starts its own adapter and child command. A target can be any
 trusted local terminal client; no particular vendor or gateway is required.
 
-## Build
+## Install
 
 Requires Go 1.26 or newer. Supported adapter platforms: macOS and Linux.
 
 ```sh
-go build -trimpath -o bin/ssh-command-adapter .
+git clone https://github.com/xiecheesejohn/ssh-command-adapter.git
+cd ssh-command-adapter
+sh scripts/install.sh
 ```
 
-Keep the executable at a stable absolute path before initializing it: the
-generated SSH configuration refers to that path.
+The script builds from this checkout and installs to `~/.local/bin`. It does not
+modify your shell startup files, SSH config, or private keys. If that directory
+is missing from PATH, add this to your shell startup file and open a new terminal:
+
+```sh
+export PATH="$HOME/.local/bin:$PATH"
+```
+
+Use `INSTALL_DIR=/another/bin sh scripts/install.sh` to choose a different
+directory. Re-run the script to update the binary without changing private
+configuration. `make install` runs the installer; `make build` builds into the
+checkout's `bin` directory for development.
 
 ## Quick start
 
 ```sh
-./bin/ssh-command-adapter init
+ssh-command-adapter init --no-client-auth
 ```
 
 Initialization creates a **new private directory outside the repository**:
@@ -42,11 +54,29 @@ Initialization creates a **new private directory outside the repository**:
 - macOS: `~/Library/Application Support/ssh-command-adapter`
 - Linux: `$XDG_CONFIG_HOME/ssh-command-adapter`, usually `~/.config/ssh-command-adapter`
 
-The directory contains an Ed25519 SSH host key, a dedicated client key,
-`authorized_keys`, pinned `known_hosts`, `config.json`, and an `ssh_config`
-snippet. It has mode `0700`, files have mode `0600`. Existing state is never
-overwritten. Use `init --dir /absolute/private/path` for a different location;
-its parent must already exist.
+The directory contains an Ed25519 SSH host key, pinned `known_hosts`,
+`config.json`, and an `ssh_config` snippet. Client keys are unnecessary for this
+private stdio connection. Omit `--no-client-auth` to generate client keys instead.
+The directory has mode `0700`, files have mode `0600`. Existing state is never
+overwritten. Initialize only once; upgrades keep using your existing state.
+Use `init --dir /absolute/private/path` for another location; its parent must exist.
+
+When PATH resolves to the installed binary, the generated entry uses its short
+name and `%r` for the SSH username. At the default configuration location it
+also omits the unnecessary `--config` argument:
+
+```sshconfig
+    ProxyCommand ssh-command-adapter --stdio --no-client-auth --target %r
+```
+
+If PATH does not resolve to the binary being initialized, the generator retains
+its absolute path. GUI clients must inherit an appropriate PATH too.
+
+Simple examples: [command configuration](examples/config.json),
+[macOS SSH entry](examples/ssh_config.macos), and
+[Linux SSH entry](examples/ssh_config.linux). Set your actual command in the
+private JSON file, then paste the matching SSH entry before wildcard blocks.
+For custom configuration directories, use the generated paths instead.
 
 The printed command opens a local Bash session for an initial smoke test. Then
 edit the private `config.json` to define your actual local terminal command:
@@ -54,7 +84,6 @@ edit the private `config.json` to define your actual local terminal command:
 ```json
 {
   "host_key": "host_key",
-  "authorized_keys": "authorized_keys",
   "targets": {
     "remote": {
       "command": ["/usr/bin/ssh", "-tt", "user@server.example.com"]
@@ -69,14 +98,14 @@ arguments. Use absolute paths when possible. Key paths are resolved relative to
 the configuration file. To validate without connecting:
 
 ```sh
-./bin/ssh-command-adapter --config /absolute/private/path/config.json --target remote --check
+ssh-command-adapter --stdio --no-client-auth --target remote --check
 ```
 
 In the generated `ssh_config`, rename `Host command-shell` to your desired alias,
-change `User shell` to `User remote`, and change `--target shell` to
-`--target remote`. The SSH username selects the configured local target; the
+change `User shell` to `User remote`. `%r` automatically selects that configured
+target. The SSH username selects the configured local target; the
 destination's real username belongs in the command array. Keep the generated
-identity and host-verification settings. Then:
+host-verification settings (and client identity settings, if enabled). Then:
 
 ```sh
 tssh -F /absolute/private/path/ssh_config your-alias
@@ -119,6 +148,23 @@ CLI. Do not combine this with the CLI's own automatic second login or it may
 send the command twice. This automation is a tssh feature; ordinary OpenSSH
 ignores the `#!!` directives and requires manual second login or a local wrapper.
 
+The same gateway can serve a wildcard entry such as `Host *.example.com`: omit
+`HostName localhost` so `%h` remains the destination hostname, and use
+`ExpectSendText1 ssh %r@%h\r`. Set `User` to the intended destination username
+and define a same-named local target that opens the gateway. With `--target %r`,
+all matching hosts reuse that one command. Place this entry before `Host *`.
+Alias names are matched before `HostName` expansion; a short alias needs its
+own matching entry.
+
+Some tssh versions verify `HostName` even with `HostKeyAlias`. In the adapter's
+dedicated `known_hosts` file, add the wildcard to the name field of the existing
+key, e.g. `ssh-command-adapter,localhost,*.example.com ssh-ed25519 ...`. Do not
+change the key or disable strict checking. This key identifies the local
+adapter; the gateway CLI handles destination identity. See the
+[wildcard example](examples/ssh_config.wildcard.macos). Ordinary OpenSSH ignores
+tssh's automatic second-login directives; this remains an interactive adapter,
+not a general-purpose replacement for SSH exec or forwarding.
+
 ### Optional: omit local client key authentication
 
 Since `--stdio` uses private pipes between the SSH client and its own adapter
@@ -127,7 +173,8 @@ entry's `ProxyCommand` and remove `IdentityFile`, `IdentitiesOnly`,
 `IdentityAgent`, and `PreferredAuthentications`. The flag requires `--stdio`;
 there is no unauthenticated network listener. The requested SSH username must
 still match the configured target. `authorized_keys` may be omitted from the
-JSON configuration in this mode. Key authentication remains the default.
+JSON configuration in this mode. Key authentication remains the default when
+the flag is absent. `init --no-client-auth` generates this simplified setup directly.
 
 Keep `HostKeyAlias`, `UserKnownHostsFile`, and `StrictHostKeyChecking yes` to
 verify the adapter's stable host identity. The SSH protocol still needs a host

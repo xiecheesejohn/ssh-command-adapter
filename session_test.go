@@ -367,3 +367,29 @@ func TestNoClientAuthRejectsWrongTarget(t *testing.T) {
 		t.Fatal("unexpected authentication success for wrong target")
 	}
 }
+
+func TestInitializeWithoutClientKeys(t *testing.T) {
+	dir := filepath.Join(t.TempDir(), "private")
+	if err := initializeMode(dir, true); err != nil {
+		t.Fatal(err)
+	}
+	for _, name := range []string{"client_key", "client_key.pub", "authorized_keys"} {
+		if _, err := os.Stat(filepath.Join(dir, name)); !errors.Is(err, os.ErrNotExist) {
+			t.Fatalf("unexpected %s: %v", name, err)
+		}
+	}
+	cfg, err := readConfig(filepath.Join(dir, "config.json"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err := serverConfig(cfg, "shell", true); err != nil {
+		t.Fatal(err)
+	}
+	data, err := os.ReadFile(filepath.Join(dir, "ssh_config"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if strings.Contains(string(data), "IdentityFile") || !strings.Contains(string(data), "--no-client-auth") || !strings.Contains(string(data), "--target %r") {
+		t.Fatalf("unexpected generated config: %s", data)
+	}
+}

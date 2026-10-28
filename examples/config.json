@@ -1,0 +1,8 @@
+{
+  "host_key": "host_key",
+  "targets": {
+    "work": {
+      "command": ["/usr/bin/ssh", "-tt", "user@server.example.com"]
+    }
+  }
+}

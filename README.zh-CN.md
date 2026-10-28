@@ -16,16 +16,28 @@ tssh → ProxyCommand → 本地 SSH 适配器 → PTY → 本地登录命令 �
 需要 Go 1.26+，支持 macOS 和 Linux：
 
 ```sh
-go build -trimpath -o bin/ssh-command-adapter .
-./bin/ssh-command-adapter init
+git clone https://github.com/xiecheesejohn/ssh-command-adapter.git
+cd ssh-command-adapter
+sh scripts/install.sh
+ssh-command-adapter init --no-client-auth
 ```
 
-先把编译后的程序放在固定位置再初始化，因为生成的 SSH 配置会引用它的绝对路径。
+安装脚本默认把程序放到 `~/.local/bin`，不修改 shell 或 SSH 配置。
+如果该目录不在 PATH 中，在 shell 启动文件里加上这一行，再打开新终端：
+
+```sh
+export PATH="$HOME/.local/bin:$PATH"
+```
+
+`INSTALL_DIR=/其他目录 sh scripts/install.sh` 可自定义安装位置。
+重复运行安装脚本即可更新程序，不覆盖私有配置。已有配置不必再次执行 init。
+也可以用 `make install` 安装；`make build` 仅用于在项目 bin 目录内构建。
 
 初始化在仓库外创建私有配置目录：macOS 为
 `~/Library/Application Support/ssh-command-adapter`，Linux 通常为
-`~/.config/ssh-command-adapter`。目录包含独立的主机密钥、客户端密钥、固定
-主机公钥、`config.json` 和 `ssh_config`。不会覆盖已有目录。
+`~/.config/ssh-command-adapter`。目录包含主机密钥、固定主机公钥、
+`config.json` 和 `ssh_config`。私有管道连接无需客户端密钥；若需要客户端密钥认证，
+初始化时省略 `--no-client-auth`。不会覆盖已有目录。
 也可以用 `init --dir /绝对路径` 指定新目录，父目录必须存在。
 
 编辑私有的 `config.json`，把目标定义为一个命令参数数组，例如：
@@ -33,7 +45,6 @@ go build -trimpath -o bin/ssh-command-adapter .
 ```json
 {
   "host_key": "host_key",
-  "authorized_keys": "authorized_keys",
   "targets": {
     "work": {
       "command": ["/usr/bin/ssh", "-tt", "user@server.example.com"]
@@ -47,9 +58,21 @@ go build -trimpath -o bin/ssh-command-adapter .
 密钥路径相对于该配置文件。
 
 在生成的 `ssh_config` 中，把 `Host command-shell` 改为 `Host work`，
-把 `User shell` 改为 `User work`，把 `--target shell` 改为 `--target work`。
+把 `User shell` 改为 `User work`，`%r` 会自动传入这个目标名称。
 这里 `User` 是本地目标名称，真正的远端用户名写在命令数组里。
-保留生成的独立身份密钥、主机校验和其他设置。
+保留生成的主机校验和其他设置。程序在 PATH 中时，默认位置的配置会生成短命令：
+
+```sshconfig
+    ProxyCommand ssh-command-adapter --stdio --no-client-auth --target %r
+```
+
+无需填写项目的长路径，也无需指定默认的 config.json 路径。若初始化时 PATH
+指向其他同名程序，生成器会使用当前程序的绝对路径。图形客户端也需继承正确的 PATH。
+
+可直接参考：[精简命令配置](examples/config.json)、
+[macOS SSH 配置](examples/ssh_config.macos)、[Linux SSH 配置](examples/ssh_config.linux)。
+把真实命令写进私有 JSON，再把对应平台的 Host 条目放进 `~/.ssh/config` 的通配条目之前。
+自定义配置目录时，使用 init 生成的路径。
 
 先独立验证：
 
@@ -81,6 +104,19 @@ Expect 或文件传输配置继续生效。现在执行 `tssh` 即可在原有�
 不要同时启用 CLI 自己的自动二跳，否则可能重复执行。这是登录时的一次交互，
 后续缩放仍由适配器处理，文件传输仍交给跳板机 CLI。该自动交互仅适用于 tssh；
 普通 OpenSSH 会忽略 `#!!` 配置，需手动执行第二跳或使用本地包装命令。
+
+同一个跳板机也可供 `Host *.example.com` 通配条目使用：不要设置
+`HostName localhost`，让 `%h` 保留实际目标域名；自动二跳命令写成
+`ExpectSendText1 ssh %r@%h\r`。把 `User` 设成远端用户名，并在私有 JSON 里
+创建同名目标，命令仅打开跳板机。这样 `--target %r` 会复用该命令，而不必为每个
+域名单独配置。通配条目放在 `Host *` 前面；短别名需单独匹配，不能依赖其 HostName
+再次命中通配规则。
+
+部分 tssh 版本不使用 HostKeyAlias 校验，因此需在适配器专用 known_hosts
+现有公钥的名称字段加入通配域名，例如 `ssh-command-adapter,localhost,*.example.com`。
+不修改公钥，不关闭严格校验。这里校验的是本机适配器，远端身份仍由跳板机 CLI
+处理。见[通配示例](examples/ssh_config.wildcard.macos)。普通 OpenSSH 不执行 tssh
+的自动二跳指令，该配置也不适用于 SSH exec、端口转发等非交互用途。
 
 ## 可选：省略本机客户端密钥认证
 

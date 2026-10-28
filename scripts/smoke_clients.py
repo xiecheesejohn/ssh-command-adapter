@@ -40,11 +40,11 @@ while True:
 '''
 
 
-def check_client(name, args, state, auto_login=False, no_client_auth=False):
+def check_client(name, args, state, auto_login=False, no_client_auth=False, destination="command-shell"):
     master, slave = pty.openpty()
     fcntl.ioctl(slave, termios.TIOCSWINSZ, struct.pack("HHHH", 24, 80, 0, 0))
     proc = subprocess.Popen(
-        args + ["-F", str(state / "ssh_config"), "command-shell"],
+        args + ["-F", str(state / "ssh_config"), destination],
         stdin=slave, stdout=slave, stderr=slave, start_new_session=True,
     )
     os.close(slave)
@@ -89,10 +89,25 @@ def check_client(name, args, state, auto_login=False, no_client_auth=False):
 def main():
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("--adapter", default="bin/ssh-command-adapter")
+    parser.add_argument("--install", action="store_true", help="also test source installation into a temporary PATH directory")
     args = parser.parse_args()
     adapter = Path(args.adapter).resolve()
     with tempfile.TemporaryDirectory(prefix="adapter-client-smoke-") as tmp:
         root = Path(tmp)
+        if args.install:
+            installer = Path(__file__).resolve().parent / "install.sh"
+            install_dir = root / "installed bin"
+            subprocess.run(["sh", str(installer)], check=True, env={**os.environ, "INSTALL_DIR": str(install_dir)})
+            adapter = install_dir / "ssh-command-adapter"
+            os.environ["PATH"] = str(install_dir) + os.pathsep + os.environ.get("PATH", "")
+            fresh = root / "no-client-key state"
+            subprocess.run([str(adapter), "init", "--no-client-auth", "--dir", str(fresh)], check=True, capture_output=True)
+            generated = (fresh / "ssh_config").read_text()
+            if "ProxyCommand 'ssh-command-adapter' --stdio --no-client-auth" not in generated:
+                raise RuntimeError("installed binary did not generate a short ProxyCommand")
+            if (fresh / "client_key").exists():
+                raise RuntimeError("client-key-free initialization created a client key")
+            print("Installer and short-name initialization PASS")
         # Include spaces to exercise quoting in both client configuration parsers.
         state = root / "private state"
         subprocess.run([str(adapter), "init", "--dir", str(state)], check=True, capture_output=True)
@@ -129,6 +144,16 @@ def main():
                 r"    #!! ExpectSendText1 ssh user@server.example.com\r"
             ), encoding="utf-8")
             check_client("tssh", [tssh], state, auto_login=True, no_client_auth=True)
+            # A wildcard entry must preserve the input hostname for %h, while
+            # the dedicated known_hosts file pins the local adapter's key.
+            text = ssh_config.read_text().replace("Host command-shell", "Host *.example.com")
+            text = text.replace("    HostName localhost\n", "")
+            text = text.replace("ssh user@server.example.com", "ssh user@%h")
+            ssh_config.write_text(text, encoding="utf-8")
+            known = state / "known_hosts"
+            known.write_text(known.read_text().replace("ssh-command-adapter,localhost ", "ssh-command-adapter,localhost,*.example.com "), encoding="utf-8")
+            check_client("tssh", [tssh], state, auto_login=True, no_client_auth=True, destination="server.example.com")
+            print("Wildcard hostname expansion and pinned local host key PASS")
 
 
 if __name__ == "__main__":

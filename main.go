@@ -31,7 +31,7 @@ type target struct {
 
 type config struct {
 	HostKey        string            `json:"host_key"`
-	AuthorizedKeys string            `json:"authorized_keys"`
+	AuthorizedKeys string            `json:"authorized_keys,omitempty"`
 	Targets        map[string]target `json:"targets"`
 }
 
@@ -51,13 +51,14 @@ func run() error {
 	if len(os.Args) > 1 && os.Args[1] == "init" {
 		fs := flag.NewFlagSet("init", flag.ContinueOnError)
 		dir := fs.String("dir", defaultDir, "private directory for keys and configuration")
+		noClientAuth := fs.Bool("no-client-auth", false, "generate a stdio-only configuration without client keys")
 		if err := fs.Parse(os.Args[2:]); err != nil {
 			return err
 		}
 		if fs.NArg() != 0 {
 			return errors.New("init takes no positional arguments")
 		}
-		return initialize(*dir)
+		return initializeMode(*dir, *noClientAuth)
 	}
 	fs := flag.NewFlagSet("ssh-command-adapter", flag.ContinueOnError)
 	path := fs.String("config", filepath.Join(defaultDir, "config.json"), "trusted local configuration")
@@ -240,6 +241,10 @@ func (c *stdioConn) SetReadDeadline(t time.Time) error  { return c.in.SetReadDea
 func (c *stdioConn) SetWriteDeadline(t time.Time) error { return c.out.SetWriteDeadline(t) }
 
 func initialize(dir string) error {
+	return initializeMode(dir, false)
+}
+
+func initializeMode(dir string, noClientAuth bool) error {
 	abs, err := filepath.Abs(dir)
 	if err != nil {
 		return err
@@ -252,12 +257,14 @@ func initialize(dir string) error {
 	if err != nil {
 		return err
 	}
-	client, err := writeKey(filepath.Join(abs, "client_key"))
-	if err != nil {
-		return err
-	}
-	if err := os.WriteFile(filepath.Join(abs, "authorized_keys"), ssh.MarshalAuthorizedKey(client), 0600); err != nil {
-		return err
+	if !noClientAuth {
+		client, err := writeKey(filepath.Join(abs, "client_key"))
+		if err != nil {
+			return err
+		}
+		if err := os.WriteFile(filepath.Join(abs, "authorized_keys"), ssh.MarshalAuthorizedKey(client), 0600); err != nil {
+			return err
+		}
 	}
 	// tssh versions that do not honor HostKeyAlias verify HostName instead.
 	// This is a private known_hosts file dedicated to this one adapter.
@@ -265,6 +272,9 @@ func initialize(dir string) error {
 		return err
 	}
 	cfg := config{HostKey: "host_key", AuthorizedKeys: "authorized_keys", Targets: map[string]target{"shell": {Command: []string{"/bin/bash", "-l"}}}}
+	if noClientAuth {
+		cfg.AuthorizedKeys = ""
+	}
 	data, err := json.MarshalIndent(cfg, "", "  ")
 	if err != nil {
 		return err
@@ -276,15 +286,27 @@ func initialize(dir string) error {
 	if err != nil {
 		return err
 	}
+	proxy := shellQuote(executableReference(exe)) + " --stdio"
+	if noClientAuth {
+		proxy += " --no-client-auth"
+	}
+	base, err := os.UserConfigDir()
+	if err != nil {
+		return err
+	}
+	if abs != filepath.Join(base, "ssh-command-adapter") {
+		proxy += " --config " + shellQuote(filepath.Join(abs, "config.json"))
+	}
+	proxy += " --target %r"
+	identity := ""
+	if !noClientAuth {
+		identity = fmt.Sprintf("    IdentityFile %s\n    IdentitiesOnly yes\n    IdentityAgent none\n    PreferredAuthentications publickey\n", sshQuote(filepath.Join(abs, "client_key")))
+	}
 	text := fmt.Sprintf(`Host command-shell
     HostName localhost
     User shell
-    ProxyCommand %s --stdio --config %s --target shell
-    IdentityFile %s
-    IdentitiesOnly yes
-    IdentityAgent none
-    PreferredAuthentications publickey
-    HostKeyAlias ssh-command-adapter
+    ProxyCommand %s
+%s    HostKeyAlias ssh-command-adapter
     UserKnownHostsFile %s
     StrictHostKeyChecking yes
     ControlMaster no
@@ -296,13 +318,27 @@ func initialize(dir string) error {
     #!! EnableDragFile no
     #!! EnableOSC52 no
     #!! ExpectCount 0
-`, shellQuote(exe), shellQuote(filepath.Join(abs, "config.json")), sshQuote(filepath.Join(abs, "client_key")), sshQuote(filepath.Join(abs, "known_hosts")))
+`, proxy, identity, sshQuote(filepath.Join(abs, "known_hosts")))
 	if err := os.WriteFile(filepath.Join(abs, "ssh_config"), []byte(text), 0600); err != nil {
 		return err
 	}
 	fmt.Fprintln(os.Stderr, "Created private configuration:", abs)
 	fmt.Fprintln(os.Stderr, "Try: tssh -F", shellQuote(filepath.Join(abs, "ssh_config")), "command-shell")
 	return nil
+}
+
+// Use the short command only when PATH resolves to this very executable.
+// Otherwise retain its absolute path so newly generated configurations work.
+func executableReference(exe string) string {
+	path, err := exec.LookPath("ssh-command-adapter")
+	if err == nil {
+		current, e1 := os.Stat(exe)
+		found, e2 := os.Stat(path)
+		if e1 == nil && e2 == nil && os.SameFile(current, found) {
+			return "ssh-command-adapter"
+		}
+	}
+	return exe
 }
 
 func writeKey(path string) (ssh.PublicKey, error) {

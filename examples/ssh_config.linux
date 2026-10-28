@@ -1,0 +1,19 @@
+# Paste before broad Host * blocks in ~/.ssh/config.
+# Assumes: program on PATH, init --no-client-auth, default XDG_CONFIG_HOME.
+# Match User to a target in your private config.json.
+Host command-work
+    HostName localhost
+    User work
+    ProxyCommand ssh-command-adapter --stdio --no-client-auth --target %r
+    HostKeyAlias ssh-command-adapter
+    UserKnownHostsFile ~/.config/ssh-command-adapter/known_hosts
+    StrictHostKeyChecking yes
+    ControlMaster no
+    ControlPath none
+    RequestTTY force
+    RemoteCommand none
+    #!! EnableTrzsz no
+    #!! EnableZmodem no
+    #!! EnableDragFile no
+    #!! EnableOSC52 no
+    #!! ExpectCount 0
