@@ -1,0 +1,12 @@
+{
+  "host_key": "host_key",
+  "authorized_keys": "authorized_keys",
+  "targets": {
+    "shell": {
+      "command": ["/bin/bash", "-l"]
+    },
+    "remote": {
+      "command": ["/usr/bin/ssh", "-tt", "user@server.example.com"]
+    }
+  }
+}

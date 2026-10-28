@@ -1,0 +1,26 @@
+name: test
+
+on:
+  push:
+  pull_request:
+
+permissions:
+  contents: read
+
+jobs:
+  test:
+    strategy:
+      matrix:
+        os: [ubuntu-latest, macos-latest]
+    runs-on: ${{ matrix.os }}
+    steps:
+      - uses: actions/checkout@v5
+      - uses: actions/setup-go@v6
+        with:
+          go-version-file: go.mod
+          cache: true
+      - run: go test -race -timeout 90s ./...
+      - run: go vet ./...
+      - run: test -z "$(gofmt -l *.go)"
+      - run: go build -trimpath -o bin/ssh-command-adapter .
+      - run: python3 scripts/smoke_clients.py
